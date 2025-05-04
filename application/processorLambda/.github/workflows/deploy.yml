@@ -1,0 +1,40 @@
+name: Deploy ProcessorLambda to AWS
+
+on:
+  push:
+    branches:
+      - main
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v3
+
+      - name: Configure AWS credentials
+        uses: aws-actions/configure-aws-credentials@v1
+        with:
+          aws-access-key-id: ${{ secrets.PROCESSOR_AWS_ACCESS_KEY }}
+          aws-secret-access-key: ${{ secrets.PROCESSOR_AWS_SECRET_KEY }}
+          aws-region: us-east-1
+
+      - name: Install Terraform
+        uses: hashicorp/setup-terraform@v2
+        with:
+          terraform_version: 1.5.0
+
+      - name: Terraform Init
+        run: terraform init
+        working-directory: infrastructure
+
+      - name: Terraform Apply
+        run: terraform apply -auto-approve -var="processor_aws_access_key=${{ secrets.PROCESSOR_AWS_ACCESS_KEY }}" -var="processor_aws_secret_key=${{ secrets.PROCESSOR_AWS_SECRET_KEY }}" -var="cyberark_account_id=${{ secrets.CYBERARK_ACCOUNT_ID }}"
+        working-directory: infrastructure
+
+      - name: Deploy Lambda
+        run: |
+          npm install
+          npm run build
+          npm run deploy
+        working-directory: processorLambda

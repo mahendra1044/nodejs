@@ -1,0 +1,104 @@
+ProcessorLambda:
+Sample SQS message processed by the Lambda.
+
+Sample email notifications (success/failure) sent via SES.
+
+Sample ServiceNow RITM creation request for failures.
+
+
+
+
+
+
+===============
+Sample SQS Message
+Description: The SQS message received by ProcessorLambda from the safe-creation-queue.
+
+Queue: safe-creation-queue.fifo
+
+MessageGroupId: 12345
+
+Sample Message Body
+json
+
+{
+  "correlationId": "12345",
+  "adGroupAttributes": {
+    "groupName": "TestGroup",
+    "description": "Test AD Group",
+    "owner": "test.owner@example.com"
+  },
+  "pamSafeAttributes": {
+    "safeName": "TestSafe",
+    "description": "Test CyberArk Safe",
+    "managingCPM": "PasswordManager"
+  }
+}
+
+Context
+The message triggers ProcessorLambda, which processes it as described in the combined steps.
+
+The correlationId ensures ordered processing within the FIFO queue.
+
+Sample SES Email Notifications
+Success Email
+Description: Sent when both group and safe are created successfully.
+
+From: no-reply@example.com
+
+To: admin@example.com
+
+Subject: Safe Creation Succeeded: 12345
+
+Body:
+
+AD Group TestGroup and Safe TestSafe created.
+
+Failure Email (Max Retries)
+Description: Sent when max retries (6) are reached.
+
+From: no-reply@example.com
+
+To: admin@example.com
+
+Subject: Safe Creation Failed: 12345
+
+Body:
+
+Failed to create safe after 6 retries. RITM: RITM123
+
+Context
+Emails are sent via AWS SES by ProcessorLambda after processing the request.
+
+The RITM123 is the ServiceNow ticket number for failures.
+
+Sample ServiceNow RITM Creation Request
+Description: Sent by ProcessorLambda to ServiceNow when max retries are reached or a critical failure occurs.
+
+URL: https://servicenow.api.com/createRITM
+
+Headers:
+Authorization: Bearer <servicenow-api-key>
+
+Content-Type: application/json
+
+Sample Request
+json
+
+{
+  "correlationId": "12345",
+  "description": "Failed to create AD group: Max retries exceeded"
+}
+
+Sample Response
+json
+
+{
+  "ritmNumber": "RITM123"
+}
+
+Context
+The RITM ticket is created to escalate the failure for manual intervention.
+
+The ritmNumber is included in the failure email for tracking.
+

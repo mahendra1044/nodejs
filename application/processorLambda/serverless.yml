@@ -1,0 +1,48 @@
+service: processor-lambda
+
+provider:
+  name: aws
+  runtime: nodejs18.x
+  region: us-east-1
+  environment:
+    SQS_QUEUE_URL: ${env:SQS_QUEUE_URL}
+    SQS_DLQ_URL: ${env:SQS_DLQ_URL}
+    DYNAMODB_TABLE: RetryStore
+    SES_SOURCE: no-reply@example.com
+    SES_RECIPIENT: admin@example.com
+    AWS_REGION: us-east-1
+    SAVIYNT_API_URL: https://api.apigee.com/saviynt
+    CYBERARK_API_URL: https://api.apigee.com/cyberark
+    SERVICENOW_API_URL: https://servicenow.api.com
+    LOG_LEVEL: info
+  iam:
+    role:
+      statements:
+        - Effect: Allow
+          Action:
+            - sqs:ReceiveMessage
+            - sqs:DeleteMessage
+            - sqs:SendMessage
+          Resource: "*"
+        - Effect: Allow
+          Action:
+            - dynamodb:GetItem
+            - dynamodb:PutItem
+            - dynamodb:DeleteItem
+          Resource: "arn:aws:dynamodb:us-east-1:*:table/RetryStore"
+        - Effect: Allow
+          Action:
+            - ses:SendEmail
+          Resource: "*"
+        - Effect: Allow
+          Action:
+            - secretsmanager:GetSecretValue
+          Resource: "*"
+
+functions:
+  processor:
+    handler: dist/index.handler
+    events:
+      - sqs:
+          arn: arn:aws:sqs:us-east-1:*:safe-creation-queue
+          batchSize: 10

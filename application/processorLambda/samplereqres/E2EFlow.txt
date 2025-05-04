@@ -1,0 +1,292 @@
+1.End-to-End Flow with Samples
+==============================
+
+===========================================================================================
+Test End-to-End:
+Send a POST request to https://api.apigee.com/cyberark/initiateSafeCreation.
+
+Monitor SQS, Lambda, and CloudWatch logs.
+
+Verify emails and ServiceNow tickets for success/failure.
+
+
+
+===========================================================================================
+
+
+
+To illustrate how these samples fit together, here’s a brief recap of the flow with the sample payloads:
+
+Client Sends Request:
+---------------------
+POST to https://api.apigee.com/cyberark/initiateSafeCreation with the sample request (correlationId: 12345).
+
+CyberArkWrapper responds with { "status": "SUCCESS", "message": "Request queued" } and sends the message to SQS.
+
+SQS Triggers ProcessorLambda:
+----------------------------
+ProcessorLambda receives the SQS message with the sample body (correlationId: 12345).
+
+Checks DynamoDB for retry count (e.g., 0 initially).
+
+Check Group Status:
+------------------------
+Calls GET https://api.apigee.com/saviynt/checkGroupStatus?groupName=TestGroup.
+
+Receives { "exists": false, "status": "FAILED" } (group doesn’t exist).
+
+Create Group:
+----------------
+Calls POST https://api.apigee.com/saviynt/createGroup with the sample group attributes.
+
+Receives { "status": "PENDING", "groupId": "GROUP123" }.
+
+Increments retry count to 1 and keeps the message in SQS.
+
+Retry (after 15 minutes):
+----------------------------
+CloudWatch triggers ProcessorLambda again.
+
+Calls GET /saviynt/checkGroupStatus and receives { "exists": true, "status": "CREATED", "groupId": "GROUP123" }.
+
+Create Safe:
+------------
+Calls POST https://api.apigee.com/cyberark/createSafe with the sample safe attributes.
+
+Receives { "status": "SUCCESS", "safeId": "SAFE123" }.
+
+Sends success email: AD Group TestGroup and Safe TestSafe created.
+
+Deletes the SQS message and retry count.
+
+Failure Case (Max Retries):
+------------------------------
+If group creation remains PENDING after 6 retries, ProcessorLambda:
+Calls ServiceNow with the sample RITM request, receives { "ritmNumber": "RITM123" }.
+
+Sends failure email: Failed to create safe after 6 retries. RITM: RITM123.
+
+Moves the message to DLQ and deletes it from the main queue.
+
+
+
+
+
++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++
+
+
+Deployment Instructions
+To set up and deploy the project:
+Organize Files:
+Create three separate GitHub repositories: saviyntWrapper, cyberArkWrapper, processorLambda.
+
+For each repository, copy the respective component’s files from the previous response (application code, Terraform, .env).
+
+Add the corresponding deploy.yml file to each component’s .github/workflows/ directory.
+
+Deploy ProcessorLambda (First, for SQS):
+In the processorLambda repository:
+bash
+
+cd infrastructure
+terraform init
+terraform apply -var="processor_aws_access_key=<key>" -var="processor_aws_secret_key=<secret>" -var="cyberark_account_id=<cyberark_account_id>"
+
+Note the sqs_queue_url output for use in cyberArkWrapper.
+
+Deploy SaviyntWrapper:
+In the saviyntWrapper repository:
+bash
+
+cd infrastructure
+terraform init
+terraform apply -var="saviynt_aws_access_key=<key>" -var="saviynt_aws_secret_key=<secret>"
+
+Deploy CyberArkWrapper:
+In the cyberArkWrapper repository:
+bash
+
+cd infrastructure
+terraform init
+terraform apply -var="cyberark_aws_access_key=<key>" -var="cyberark_aws_secret_key=<secret>" -var="sqs_queue_url=<sqs_queue_url_from_processor>"
+
+Configure CI/CD:
+For each repository, add the following to GitHub Secrets:
+saviyntWrapper: SAVIYNT_AWS_ACCESS_KEY, SAVIYNT_AWS_SECRET_KEY
+
+cyberArkWrapper: CYBERARK_AWS_ACCESS_KEY, CYBERARK_AWS_SECRET_KEY, SQS_QUEUE_URL
+
+processorLambda: PROCESSOR_AWS_ACCESS_KEY, PROCESSOR_AWS_SECRET_KEY, CYBERARK_ACCOUNT_ID
+
+Push the code to each repository to trigger the workflows.
+
+Configure APIGEE:
+Use the ALB DNS names from Terraform outputs (saviynt_alb_dns, cyberark_alb_dns) to set up APIGEE proxies.
+
+Deploy proxies with the security policies.
+
+Test End-to-End:
+Send a POST request to https://api.apigee.com/cyberark/initiateSafeCreation with the sample payload from the previous response.
+
+Monitor SQS, Lambda, ECS, and CloudWatch logs in each account.
+
+Verify emails and ServiceNow tickets.
+
+
+
+================================================
+==================================================
+
+Challenges and Assumptions
+Cross-Component Communication: Since ProcessorLambda needs to call SaviyntWrapper and CyberArkWrapper APIs via APIGEE, I’ll assume each component’s APIs are accessible via public APIGEE URLs (e.g., https://api.apigee.com/saviynt and https://api.apigee.com/cyberark). API keys for authentication will be stored in each account’s Secrets Manager.
+
+SQS Access: CyberArkWrapper sends messages to an SQS queue that triggers ProcessorLambda. Since they are in separate accounts, I’ll use cross-account SQS permissions to allow CyberArkWrapper to send messages to ProcessorLambda’s SQS queue. The queue will be owned by the ProcessorLambda account.
+
+Secrets Management: Each component will use its own Secrets Manager to store sensitive data (e.g., API keys for Saviynt, CyberArk, ServiceNow, and APIGEE).
+
+Deployment: Each component will have its own Terraform directory and CI/CD job, with AWS credentials configured for the respective account in GitHub Secrets.
+
+
+=========================================================================
+
+
+Client --> APIGEE Gateway
+   |
+   | POST /cyberark/initiateSafeCreation
+   v
+[ CyberArkWrapper ]
+   | Validates payload
+   | Sends message to SQS FIFO Queue
+   | Returns "Request queued"
+   v
+[ SQS FIFO Queue ] --> Triggers [ ProcessorLambda ]
+   |
+   | 1. Get retry count from DynamoDB
+   | 2. If retries >= 6:
+   |    - Create ServiceNow RITM
+   |    - Send failure email via SES
+   |    - Move to DLQ
+   |    - Delete message
+   | 3. Call SaviyntWrapper (GET /saviynt/checkGroupStatus via APIGEE)
+   v
+[ SaviyntWrapper ]
+   | Returns group status (CREATED, PENDING, or not exists)
+   v
+[ ProcessorLambda ]
+   | If group not exists or PENDING:
+   |   - Call SaviyntWrapper (POST /saviynt/createGroup via APIGEE)
+   | If group creation fails or PENDING:
+   |   - Increment retry count
+   |   - Keep message in SQS
+   | If group CREATED:
+   |   - Call CyberArkWrapper (POST /cyberark/createSafe via APIGEE)
+   v
+[ CyberArkWrapper ]
+   | Creates safe
+   | Returns success or failure
+   v
+[ ProcessorLambda ]
+   | If safe creation succeeds:
+   |   - Send success email via SES
+   |   - Delete SQS message
+   |   - Delete retry count
+   | If safe creation fails:
+   |   - Increment retry count
+   |   - If max retries:
+   |     - Create ServiceNow RITM
+   |     - Send failure email
+   |     - Move to DLQ
+   |     - Delete message
+   v
+[ CloudWatch Events ] --> Retry every 15 minutes
+[ CloudWatch Alarms ] --> Monitor DLQ, notify via SNS
+
+
+Explanation:
+Client to APIGEE: Client sends requests to APIGEE, which routes to CyberArkWrapper.
+
+CyberArkWrapper to SQS: Queues requests in SQS FIFO.
+
+SQS to ProcessorLambda: Triggers Lambda to process messages.
+
+ProcessorLambda to SaviyntWrapper: Checks and creates AD groups via APIGEE.
+
+ProcessorLambda to CyberArkWrapper: Creates safes via APIGEE.
+
+Retries and Escalations: Manages retries with DynamoDB, escalates failures to ServiceNow, and notifies via SES.
+
+Monitoring: CloudWatch schedules retries and monitors DLQ.
+
+=====================
+
+Combined Steps Explanation
+Below is a step-by-step explanation of the entire process, combining SaviyntWrapper, CyberArkWrapper, and ProcessorLambda for clarity.
+Client Initiates Request:
+A client sends a POST request to https://api.apigee.com/cyberark/initiateSafeCreation via APIGEE with a payload:
+json
+
+{
+  "correlationId": "123",
+  "adGroupAttributes": { "groupName": "TestGroup", "description": "Test", "owner": "TestOwner" },
+  "pamSafeAttributes": { "safeName": "TestSafe", "description": "Test", "managingCPM": "CPM" }
+}
+
+APIGEE validates the API key and routes the request to CyberArkWrapper.
+
+CyberArkWrapper Queues Request:
+CyberArkWrapper (initiateSafeCreation endpoint) validates the payload.
+
+Sends the request to SQS FIFO queue (safe-creation-queue) with MessageGroupId = correlationId for ordered processing.
+
+Returns a response: { "status": "SUCCESS", "message": "Request queued" }.
+
+SQS Triggers ProcessorLambda:
+The SQS message triggers ProcessorLambda.
+
+Lambda retrieves the message and parses the SafeCreationRequest.
+
+ProcessorLambda Checks Retry Count:
+Queries DynamoDB (RetryStore) for the correlationId retry count.
+
+If retryCount >= 6, escalates to ServiceNow, sends a failure email via SES, moves the message to DLQ, and deletes it from the main queue.
+
+ProcessorLambda Checks Group Status:
+Calls SaviyntWrapper (GET /saviynt/checkGroupStatus?groupName=TestGroup) via APIGEE.
+
+If the group doesn’t exist or is PENDING, proceeds to group creation.
+
+ProcessorLambda Creates Group:
+Calls SaviyntWrapper (POST /saviynt/createGroup) with adGroupAttributes.
+
+If creation fails, increments retry count in DynamoDB and keeps the message in SQS for retry.
+
+If PENDING, increments retry count and waits for the next retry (scheduled every 15 minutes via CloudWatch).
+
+ProcessorLambda Creates Safe:
+If group status is CREATED, calls CyberArkWrapper (POST /cyberark/createSafe) with pamSafeAttributes.
+
+If successful, sends a success email via SES, deletes the SQS message, and removes the retry count from DynamoDB.
+
+If failed, increments retry count. If max retries reached, escalates to ServiceNow, sends a failure email, and moves to DLQ.
+
+Retries and Monitoring:
+CloudWatch Events triggers ProcessorLambda every 15 minutes to retry pending messages.
+
+CloudWatch Alarms monitor DLQ messages and notify via SNS if messages appear.
+
+Logs are captured in CloudWatch for debugging.
+
+Completion:
+On success, the client receives email confirmation of group and safe creation.
+
+On failure after max retries, a ServiceNow RITM ticket is created, and the client is notified via email.
+
+Key Points:
+Ordering: SQS FIFO ensures messages with the same correlationId are processed sequentially.
+
+Retries: DynamoDB tracks retries with a 1-day TTL for cleanup.
+
+Security: APIGEE enforces API key authentication; Secrets Manager stores keys; KMS encrypts data.
+
+Scalability: ECS Fargate auto-scales; SQS and Lambda handle high volumes; DynamoDB uses on-demand capacity.
+

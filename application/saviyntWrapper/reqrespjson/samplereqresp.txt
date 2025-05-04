@@ -1,0 +1,122 @@
+SaviyntWrapper:
+POST /saviynt/createGroup: Creates an AD group in Saviynt (called by ProcessorLambda).
+
+GET /saviynt/checkGroupStatus: Checks the status of an AD group (called by ProcessorLambda).
+
+
+
+====================
+Endpoint: POST /saviynt/createGroup
+Purpose: Creates an AD group in Saviynt. Called by ProcessorLambda when the group does not exist or is pending.
+
+URL: https://api.apigee.com/saviynt/createGroup
+
+Headers:
+Content-Type: application/json
+
+X-API-Key: <apigee-api-key>
+
+Sample Request
+json
+
+{
+  "groupName": "TestGroup",
+  "description": "Test AD Group",
+  "owner": "test.owner@example.com"
+}
+
+Sample Success Response (200 OK)
+Description: Group creation request is accepted (may be asynchronous).
+
+json
+
+{
+  "status": "PENDING",
+  "groupId": "GROUP123",
+  "message": "Group creation request submitted"
+}
+
+Sample Error Response (400 Bad Request)
+Description: Invalid group attributes (e.g., missing groupName).
+
+json
+
+{
+  "message": "Invalid group attributes"
+}
+
+Sample Error Response (500 Internal Server Error)
+Description: Saviynt API call fails.
+
+json
+
+{
+  "status": "FAILED",
+  "message": "Failed to create group: API error"
+}
+
+Context
+Saviynt group creation can take up to 15 minutes, so the response may indicate PENDING.
+
+ProcessorLambda will retry until the group status is CREATED.
+
+Endpoint: GET /saviynt/checkGroupStatus
+Purpose: Checks the status of an AD group in Saviynt. Called by ProcessorLambda to determine if the group exists and is created.
+
+URL: https://api.apigee.com/saviynt/checkGroupStatus?groupName=TestGroup
+
+Headers:
+X-API-Key: <apigee-api-key>
+
+Sample Request
+Query Parameter: groupName=TestGroup
+
+Sample Success Response (200 OK)
+Description: Group exists and is created.
+
+json
+
+{
+  "exists": true,
+  "groupId": "GROUP123",
+  "status": "CREATED"
+}
+
+Sample Response (404 Not Found)
+Description: Group does not exist.
+
+json
+
+{
+  "exists": false,
+  "status": "FAILED",
+  "message": "Group not found"
+}
+
+Sample Response (200 OK, Pending)
+Description: Group creation is still in progress.
+
+json
+
+{
+  "exists": true,
+  "groupId": "GROUP123",
+  "status": "PENDING"
+}
+
+Sample Error Response (500 Internal Server Error)
+Description: Saviynt API call fails.
+
+json
+
+{
+  "exists": false,
+  "status": "FAILED",
+  "message": "Failed to check group status: API error"
+}
+
+Context
+ProcessorLambda uses this endpoint to decide whether to create a group or proceed to safe creation.
+
+If status is PENDING, Lambda increments the retry count and waits for the next retry.
+

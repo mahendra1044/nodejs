@@ -1,0 +1,119 @@
+
+CyberArkWrapper:
+POST /cyberark/initiateSafeCreation: Initiates a safe creation request by queuing it in SQS.
+
+POST /cyberark/createSafe: Creates a safe in CyberArk (called internally by ProcessorLambda).
+
+
+
+
+========================
+
+Endpoint: POST /cyberark/initiateSafeCreation
+Purpose: Allows a client to initiate a safe creation request, which is validated and queued in the SQS FIFO queue for asynchronous processing by ProcessorLambda.
+
+URL: https://api.apigee.com/cyberark/initiateSafeCreation
+
+Headers:
+Content-Type: application/json
+
+X-API-Key: <apigee-api-key> (for APIGEE authentication)
+
+Sample Request
+json
+
+{
+  "correlationId": "12345",
+  "adGroupAttributes": {
+    "groupName": "TestGroup",
+    "description": "Test AD Group",
+    "owner": "test.owner@example.com"
+  },
+  "pamSafeAttributes": {
+    "safeName": "TestSafe",
+    "description": "Test CyberArk Safe",
+    "managingCPM": "PasswordManager"
+  }
+}
+
+Sample Success Response (200 OK)
+Description: The request is valid and successfully queued in SQS.
+
+json
+
+{
+  "status": "SUCCESS",
+  "message": "Received your Safe creation request. Processing will complete shortly."
+}
+
+Sample Error Response (400 Bad Request)
+Description: Invalid payload (e.g., missing correlationId).
+
+json
+
+{
+  "message": "Invalid request payload"
+}
+
+Sample Error Response (500 Internal Server Error)
+Description: Failed to send message to SQS (e.g., SQS unavailable).
+
+json
+
+{
+  "status": "FAILED",
+  "message": "SQS send failed: Service unavailable"
+}
+
+Context
+The correlationId ensures ordered processing in the SQS FIFO queue.
+
+The request is sent to the safe-creation-queue with MessageGroupId = 12345.
+
+ProcessorLambda will pick up the message and begin processing.
+
+Endpoint: POST /cyberark/createSafe
+Purpose: Creates a safe in CyberArk. This endpoint is called internally by ProcessorLambda after confirming the AD group is created.
+
+URL: https://api.apigee.com/cyberark/createSafe
+
+Headers:
+Content-Type: application/json
+
+X-API-Key: <apigee-api-key>
+
+Sample Request
+json
+
+{
+  "safeName": "TestSafe",
+  "description": "Test CyberArk Safe",
+  "managingCPM": "PasswordManager"
+}
+
+Sample Success Response (200 OK)
+Description: Safe is created successfully in CyberArk.
+
+json
+
+{
+  "status": "SUCCESS",
+  "safeId": "SAFE123",
+  "message": "Safe created successfully"
+}
+
+Sample Error Response (500 Internal Server Error)
+Description: CyberArk API call fails (e.g., invalid attributes).
+
+json
+
+{
+  "status": "FAILED",
+  "message": "Failed to create safe: Invalid safe attributes"
+}
+
+Context
+This endpoint is not directly called by clients but by ProcessorLambda via APIGEE.
+
+The response determines whether ProcessorLambda marks the request as complete or retries.
+
